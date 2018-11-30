@@ -189,6 +189,7 @@ unsigned char PeakFinder(unsigned char *rawData, unsigned char rawData_window_le
 	unsigned char slope_increasing;
 
 	temp_peak = *current_peak;
+	slope_increasing = 0;
 
 	/**
 	* @brief Go thru the window
@@ -216,7 +217,7 @@ unsigned char PeakFinder(unsigned char *rawData, unsigned char rawData_window_le
 		*threshold_crossed = 1;
 	}
 	*current_peak = temp_peak;
-	return(1);
+	return(slope_increasing);
 }
 
 
@@ -270,27 +271,31 @@ int main(void)
 
     while (1)
     {
-    	for (audioData_counter = 0; audioData_counter < AUDIO_DATA_WINDOW_LEN; audioData_counter += rawData_window_len)
+    	if(audioData_counter == AUDIO_DATA_WINDOW_LEN)
     	{
-    		ret_val = PeakFinder(&audioData[audioData_counter], rawData_window_len, &current_peak, threshold, &threshold_crossed);
+			for (audioData_counter = 0; audioData_counter < AUDIO_DATA_WINDOW_LEN; audioData_counter += rawData_window_len)
+			{
+				ret_val = PeakFinder(&audioData[audioData_counter], rawData_window_len, &current_peak, threshold, &threshold_crossed);
 
-    		if(threshold_crossed == 1)
-    		{
-    			BlankCODEC(1);
-    		}
-    		else if(threshold_crossed == 0)
-    		{
-    			BlankCODEC(0);
-    		}
+				if(threshold_crossed == 1)
+				{
+					BlankCODEC(1);
+				}
+				else if(threshold_crossed == 0)
+				{
+					BlankCODEC(0);
+				}
 
-    		if(ret_val > current_peak)
-    		{
-    			SwitchFilterBanks(1);
-    		}
-    		else if(ret_val <= current_peak)
-    		{
-    			SwitchFilterBanks(0);
-    		}
+				if(ret_val > current_peak)
+				{
+					SwitchFilterBanks(1);
+				}
+				else if(ret_val <= current_peak)
+				{
+					SwitchFilterBanks(0);
+				}
+			}
+			audioData_counter = 0;
     	}
       //EMU_EnterEM1(); // Enter EM1 (won't exit)
     }
