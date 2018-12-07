@@ -6,6 +6,11 @@
  * @section License
  * <b>(C) Copyright 2018 Zeteo </b>
  ******************************************************************************/
+/*
+ * first zeteo repo change
+ */
+
+
 
 #include <stdio.h>
 #include "em_device.h"
@@ -21,15 +26,19 @@
 
 #define adcFreq   16000000
 
+//For the input to the ADC
 #define AUDIO_DATA_WINDOW_SIZE 32
 #define AUDIO_DATA_WINDOW_LEN 16 * 1024
+
+//For the output to the IDAC
+#define OUT_AUDIO_DATA_WINDOW_SIZE 16
+#define OUT_AUDIO_DATA_WINDOW_LEN 256
 
 volatile uint32_t sample;
 uint16_t audioData_counter;
 unsigned char audioData[AUDIO_DATA_WINDOW_LEN];
 
-// Use a 32-point sine table
-#define SINE_TABLE_SIZE 32
+unsigned char out_audioData[OUT_AUDIO_DATA_WINDOW_SIZE * OUT_AUDIO_DATA_WINDOW_LEN];
 
 // Note: change this to choose the current range of the output
 #define IDAC_RANGE IDAC_CURPROG_RANGESEL_RANGE3
@@ -38,7 +47,7 @@ unsigned char audioData[AUDIO_DATA_WINDOW_LEN];
 #define WAVEFORM_FREQ 10000
 
 // The timer needs to run at FIX ME SIZE
-#define TIMER0_FREQ (WAVEFORM_FREQ * 16 * 1024)
+#define TIMER0_FREQ (WAVEFORM_FREQ * OUT_AUDIO_DATA_WINDOW_SIZE * OUT_AUDIO_DATA_WINDOW_LEN)
 
 
 
@@ -161,21 +170,87 @@ int SwitchFilterBanks(unsigned char toggle)
 	return(toggle);
 }
 
+
+void initLdma(void)
+{
+  // Descriptor loops through the sine table and outputs its values to the IDAC
+  static LDMA_Descriptor_t loopDescriptor = LDMA_DESCRIPTOR_LINKREL_M2P_BYTE(&out_audioData[0],   // Memory source address
+                                     	 	 &IDAC0->CURPROG, // Peripheral destination address
+											 OUT_AUDIO_DATA_WINDOW_LEN, // Number of words per transfer
+											 0);              // Link to same descriptor
+  loopDescriptor.xfer.doneIfs = 0;             // Don't trigger interrupt when transfer is done
+  loopDescriptor.xfer.size = ldmaCtrlSizeWord; // Transfer 32 bit words
+
+  // Transfer configuration and trigger selection
+  // Trigger on TIMER0 overflow and set loop count to size of the sine table minus one
+  LDMA_TransferCfg_t transferConfig = LDMA_TRANSFER_CFG_PERIPHERAL(ldmaPeripheralSignal_TIMER0_UFOF);
+
+  // LDMA initialization
+  LDMA_Init_t init = LDMA_INIT_DEFAULT;
+  LDMA_Init(&init);
+
+  // Start the transfer
+  uint32_t channelNum = 0;
+  LDMA_StartTransfer(channelNum, &transferConfig, &loopDescriptor);
+}
+
 /**
- * @brief send data out of the idac
+ * @brief Function to calculate the current RMS value
  */
 
-void SendIDAC(uint32_t *input_data, const uint32_t input_data_size)
+uint16_t rms_filter(uint16_t sample, uint16_t current_rms, uint16_t num_samples)
 {
-	  // Transfer configuration and trigger selection
-	  // Trigger on TIMER0 overflow and set loop count
-	  LDMA_TransferCfg_t transferConfig =
-	    LDMA_TRANSFER_CFG_PERIPHERAL(ldmaPeripheralSignal_TIMER0_UFOF);
+    uint16_t rms = current_rms;
+    uint32_t sum_squares = 1UL * num_samples * current_rms * current_rms;
 
-	  // LDMA initialization
-	  LDMA_Init_t init = LDMA_INIT_DEFAULT;
-	  LDMA_Init(&init);
+    sum_squares -= sum_squares / num_samples;
+    sum_squares += (uint32_t) sample * sample;
+    if (rms == 0) rms = 1;    /* do not divide by zero */
+    rms = (rms + sum_squares / num_samples / rms) / 2;
+    return rms;
+}
 
+unsigned char RMSFinder(unsigned char *rawData, unsigned char rawData_window_len, uint16_t *current_peak, const uint16_t threshold, unsigned char *threshold_crossed)
+{
+	uint16_t temp_rms;
+	uint16_t audio_sample;
+	unsigned char slope_increasing;
+	unsigned char i;
+
+
+
+	temp_rms= *current_peak;
+	slope_increasing = 0;
+
+	for (i = 0; i < rawData_window_len; i += 2)
+	{
+		/**
+		* @brief The wav file data is byte-wise and needs to be unsigned 16-bit ints
+		**/
+		audio_sample = rawData[i] | (uint16_t)rawData[i + 1] << 8;
+
+		temp_rms = rms_filter(audio_sample, temp_rms, 1);
+
+		if (audio_sample > temp_rms)
+		{
+			temp_rms = audio_sample;
+			slope_increasing = 1;
+		}
+		if (audio_sample <= 0)
+		{
+			slope_increasing = 0;
+		}
+		else
+		{
+			slope_increasing = 1;
+		}
+	}
+	if (temp_rms > threshold)
+	{
+		*threshold_crossed = 1;
+	}
+	*current_peak = temp_rms;
+	return(slope_increasing);
 }
 
 /**
@@ -221,21 +296,7 @@ unsigned char PeakFinder(unsigned char *rawData, unsigned char rawData_window_le
 }
 
 
-/**
- * @brief Function to calculate the current RMS value
- */
 
-uint16_t rms_filter(uint16_t sample, uint16_t current_rms, uint16_t num_samples)
-{
-    uint16_t rms = current_rms;
-    uint32_t sum_squares = 1UL * num_samples * current_rms * current_rms;
-
-    sum_squares -= sum_squares / num_samples;
-    sum_squares += (uint32_t) sample * sample;
-    if (rms == 0) rms = 1;    /* do not divide by zero */
-    rms = (rms + sum_squares / num_samples / rms) / 2;
-    return rms;
-}
 
 
 /**************************************************************************//**

@@ -1,0 +1,8 @@
+#
+####### impulse removal requirements.txt #######
+#
+###### Requirements without Version Specifiers ######
+matplotlib
+numpy
+scipy
+#
